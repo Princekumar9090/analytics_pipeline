@@ -1,0 +1,23 @@
+# Core backend
+fastapi
+uvicorn[standard]
+pydantic>=2
+sqlalchemy>=2
+asyncpg
+alembic
+
+# Streaming
+aiokafka
+
+# API
+strawberry-graphql[fastapi]
+
+# AI review gate (scripts/ai_review.py)
+anthropic
+
+# Testing & tooling
+pytest
+pytest-asyncio
+pytest-cov
+ruff
+mypy
