@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Local pre-commit gate: runs the AI architecture review on staged changes.
+# Install once with:  git config core.hooksPath .githooks
+# Bypass for a specific commit (use sparingly, and explain why in the commit
+# message) with:  git commit --no-verify
+
+set -e
+
+if ! command -v python3 &> /dev/null; then
+    echo "python3 not found — skipping AI review."
+    exit 0
+fi
+
+python3 scripts/ai_review.py
+exit $?
