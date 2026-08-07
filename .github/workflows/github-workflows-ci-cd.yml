@@ -34,9 +34,16 @@ jobs:
         run: mypy --ignore-missing-imports . || true   # non-blocking until types are cleaned up
 
       - name: Run tests
-        run: pytest --cov=./ --cov-report=xml -q
+        run: |
+          if find . -name "test_*.py" -o -name "*_test.py" 2>/dev/null | grep -q .; then
+            pytest --cov=./ --cov-report=xml -q
+          else
+            echo "No test files yet — skipping pytest for now."
+            echo "This check starts enforcing automatically the moment any test_*.py file is added."
+          fi
 
       - name: Upload coverage
+        if: hashFiles('coverage.xml') != ''
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
@@ -45,6 +52,9 @@ jobs:
   ai-review:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,10 +68,27 @@ jobs:
         run: pip install anthropic
 
       - name: Run AI architecture review
+        id: review
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           REVIEW_BASE_REF: origin/main
         run: python scripts/ai_review.py
+        continue-on-error: true   # don't stop here — we want to post the comment either way
+
+      - name: Post review comment on PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f review_output.md ]; then
+            gh pr comment ${{ github.event.pull_request.number }} --body-file review_output.md
+          else
+            echo "No review_output.md produced — nothing to post."
+          fi
+
+      - name: Fail the job if the review failed
+        if: steps.review.outcome == 'failure'
+        run: exit 1
 
   build-and-push:
     needs: [lint-and-test]
