@@ -45,7 +45,10 @@ def load(filename: str) -> str:
     path = os.path.join(REPO_ROOT, filename)
     if not os.path.exists(path):
         return ""
-    with open(path) as f:
+    # errors="replace" swaps any invalid byte for U+FFFD instead of crashing —
+    # a doc file with one stray non-UTF-8 character (common after Windows
+    # editors save as cp1252/ANSI) shouldn't take down the whole review.
+    with open(path, encoding="utf-8", errors="replace") as f:
         return f.read()
 
 
