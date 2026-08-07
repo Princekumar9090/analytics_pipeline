@@ -22,7 +22,7 @@ import sys
 from anthropic import Anthropic
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL = "claude-sonnet-4-6"
+MODEL = "claude-sonnet-5"  # real API model string — not the Artifacts-only "claude-sonnet-4-6"
 MAX_DIFF_CHARS = 15000  # keep the review focused and fast; huge diffs should be split into smaller commits anyway
 MAX_TOKENS = 2500  # enough room for the detailed, multi-section review format
 
