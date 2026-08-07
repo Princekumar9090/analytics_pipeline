@@ -24,18 +24,19 @@ from anthropic import Anthropic
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL = "claude-sonnet-4-6"
 MAX_DIFF_CHARS = 15000  # keep the review focused and fast; huge diffs should be split into smaller commits anyway
+MAX_TOKENS = 2500  # enough room for the detailed, multi-section review format
 
 
 def get_diff() -> str:
     base = os.environ.get("REVIEW_BASE_REF", "origin/main")
     result = subprocess.run(
         ["git", "diff", f"{base}...HEAD"],
-        capture_output=True, text=True, cwd=REPO_ROOT,
+        capture_output=True, text=True, cwd=REPO_ROOT, check=False,
     )
     if result.returncode != 0:
         # Fallback for local pre-commit use: staged changes, no remote ref needed
         result = subprocess.run(
-            ["git", "diff", "--cached"], capture_output=True, text=True, cwd=REPO_ROOT,
+            ["git", "diff", "--cached"], capture_output=True, text=True, cwd=REPO_ROOT, check=False,
         )
     return result.stdout
 
@@ -59,22 +60,38 @@ def build_prompt(diff: str) -> str:
     ])
     return f"""{context}
 
-Review the diff below strictly against the standards and architecture context above.
+Review the diff below as the architect persona described above. Produce a
+detailed, structured review — this is meant to teach, not just gate.
 
-Reply with a first line of exactly PASS or FAIL, then bullet-point findings.
+## Summary
+1-2 sentences: what this diff actually does.
 
-FAIL only for real violations:
-- Naming convention violations (topics, tables, env vars, consumer groups)
-- Missing tests for Tier 1 components (per STANDARDS.md section 4)
-- Unstructured logging (bare print(), missing correlation ID)
-- Silently swallowed errors (bare except:, dropped events with no DLQ/log)
-- A breaking event-schema change with no corresponding DECISIONS.md entry
-- Scope-tier violations (e.g. building a Tier 3 item as if it were Tier 1)
+## Findings
+Only include the categories below that this diff genuinely touches — don't
+force a section that isn't relevant. For each relevant category, state the
+single biggest issue first if there is one, then 1-3 critical questions
+(same spirit as ARCHITECT_REVIEWER.md's standing checklist):
+- Schema / data model changes
+- Kafka / streaming changes (partitioning, delivery semantics, windowing)
+- API changes (REST/GraphQL)
+- Infra / deploy changes
+- Standards compliance (naming, schema versioning, logging, testing per tier)
+- Performance (unnecessary allocations, N+1 patterns, blocking calls inside
+  async code, missing indexes on frequently-filtered columns, unbounded
+  loops/queries over potentially large tables)
 
-Do NOT fail on style nitpicks, naming you'd merely phrase differently, or
-missing tests for Tier 2b/optional components. Be the skeptical-but-fair
-architect described in ARCHITECT_REVIEWER.md — state the single biggest
-issue first if there is one.
+## Verdict
+End with exactly one line, formatted precisely as:
+VERDICT: PASS
+or
+VERDICT: FAIL
+followed by 1-2 sentences on why.
+
+FAIL only for real violations — naming convention violations, missing
+tests for Tier 1 components, unstructured logging, silently swallowed
+errors, a breaking schema change with no DECISIONS.md entry, or a
+scope-tier violation. Do NOT fail on style nitpicks, phrasing preferences,
+or missing tests for Tier 2b/optional components.
 
 DIFF:
 {diff[:MAX_DIFF_CHARS]}
@@ -94,12 +111,28 @@ def main() -> int:
     client = Anthropic()
     response = client.messages.create(
         model=MODEL,
-        max_tokens=1000,
+        max_tokens=MAX_TOKENS,
         messages=[{"role": "user", "content": build_prompt(diff)}],
     )
     text = response.content[0].text
     print(text)
-    return 1 if text.strip().upper().startswith("FAIL") else 0
+
+    text_upper = text.upper()
+    if "VERDICT: FAIL" in text_upper:
+        is_fail = True
+    elif "VERDICT: PASS" in text_upper:
+        is_fail = False
+    else:
+        # Couldn't find a clean verdict line — fail open (don't block on our
+        # own parsing bug) but make it loud so it doesn't go unnoticed.
+        print("WARNING: could not parse a VERDICT: line from the response — defaulting to PASS.")
+        is_fail = False
+
+    header = "## 🤖 AI Architecture Review\n\n" + ("❌ **FAIL**" if is_fail else "✅ **PASS**") + "\n\n"
+    with open(os.path.join(REPO_ROOT, "review_output.md"), "w") as f:
+        f.write(header + text)
+
+    return 1 if is_fail else 0
 
 
 if __name__ == "__main__":
